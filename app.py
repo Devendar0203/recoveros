@@ -9,6 +9,8 @@ from simulator.ml_action_scorer import MLActionScorer
 from simulator.recovery_executor import RecoveryExecutor
 from simulator.recovery_workflow import RecoveryWorkflow
 from simulator.audit_logger import AuditLogger
+from simulator.batch_recovery import BatchRecoverySimulator
+from simulator.policy_engine import RecoveryPolicyEngine
 
 
 # ============================================================
@@ -38,7 +40,17 @@ def create_workflow():
     )
 
 
+@st.cache_resource
+def create_batch_simulator():
+    return BatchRecoverySimulator(
+        MLActionScorer(),
+        RecoveryPolicyEngine(),
+        seed=42,
+    )
+
+
 workflow = create_workflow()
+batch_simulator = create_batch_simulator()
 
 
 if "event" not in st.session_state:
@@ -58,6 +70,9 @@ if "execution_result" not in st.session_state:
 
 if "audit_log" not in st.session_state:
     st.session_state.audit_log = []
+
+if "batch_results" not in st.session_state:
+    st.session_state.batch_results = None
 
 
 audit_logger = AuditLogger()
@@ -256,10 +271,11 @@ if st.sidebar.button(
 # MAIN TABS
 # ============================================================
 
-tab1, tab2, tab3, tab4 = st.tabs(
+tab1, tab2, tab3, tab4, tab5 = st.tabs(
     [
         "🤖 AI Recommendation",
         "⚡ Execute Recovery",
+        "📦 Batch Simulation",
         "📊 Analytics",
         "📜 Audit Log",
     ]
@@ -569,10 +585,106 @@ with tab2:
 
 
 # ============================================================
-# TAB 3 — ANALYTICS
+# TAB 3 — BATCH SIMULATION
 # ============================================================
 
 with tab3:
+
+    st.header("Live Batch Recovery Simulation")
+
+    st.write(
+        "Run RecoverOS across the same 100 unseen payment events used for "
+        "evaluation. The dashboard calculates recovered revenue live and "
+        "compares it with a fixed baseline on the identical cohort."
+    )
+
+    if st.button("▶ Run 100-Event Recovery Batch", width="stretch"):
+        try:
+            evaluation_events = pd.read_csv("data/evaluation_events.csv")
+            st.session_state.batch_results = {
+                "baseline": batch_simulator.run_baseline(evaluation_events),
+                "ml_policy": batch_simulator.run_ml_policy(evaluation_events),
+            }
+        except Exception as error:
+            st.error(f"Batch simulation failed: {error}")
+
+    if st.session_state.batch_results is None:
+        st.info("Run the batch to display live recovery and policy metrics.")
+    else:
+        baseline = st.session_state.batch_results["baseline"]
+        ml_policy = st.session_state.batch_results["ml_policy"]
+        additional_revenue = (
+            ml_policy["revenue_recovered"]
+            - baseline["revenue_recovered"]
+        )
+        improvement = (
+            additional_revenue / baseline["revenue_recovered"] * 100
+            if baseline["revenue_recovered"]
+            else 0.0
+        )
+
+        metric1, metric2, metric3, metric4 = st.columns(4)
+        metric1.metric("Events Evaluated", ml_policy["events"])
+        metric2.metric(
+            "ML + Policy Revenue Recovered",
+            f"₹{ml_policy['revenue_recovered']:,.2f}",
+        )
+        metric3.metric(
+            "Additional vs Baseline",
+            f"₹{additional_revenue:,.2f}",
+            f"{improvement:+.2f}%",
+        )
+        metric4.metric(
+            "Revenue Recovery Rate",
+            f"{ml_policy['revenue_recovery_rate']:.2f}%",
+        )
+
+        st.caption(
+            "Counterfactual simulation: each strategy is evaluated with the "
+            "same deterministic environment, unseen event cohort, and seed."
+        )
+
+        comparison = pd.DataFrame([
+            {
+                "Strategy": baseline["strategy"],
+                "Recovered Revenue": baseline["revenue_recovered"],
+                "Revenue Recovery Rate": baseline["revenue_recovery_rate"] / 100,
+                "Event Success Rate": baseline["event_recovery_rate"] / 100,
+            },
+            {
+                "Strategy": ml_policy["strategy"],
+                "Recovered Revenue": ml_policy["revenue_recovered"],
+                "Revenue Recovery Rate": ml_policy["revenue_recovery_rate"] / 100,
+                "Event Success Rate": ml_policy["event_recovery_rate"] / 100,
+            },
+        ])
+        st.subheader("Strategy Comparison")
+        st.dataframe(comparison, width="stretch", hide_index=True)
+
+        policy1, policy2, policy3 = st.columns(3)
+        policy1.metric("Successful Recoveries", ml_policy["successful_recoveries"])
+        policy2.metric("Policy Stops", ml_policy["policy_stops"])
+        policy3.metric("Human Escalations", ml_policy["human_escalations"])
+
+        st.subheader("Final Action Distribution")
+        st.bar_chart(pd.Series(ml_policy["action_counts"], name="Events"))
+
+        st.subheader("Batch Decision Records")
+        st.dataframe(ml_policy["details"], width="stretch", hide_index=True)
+        st.download_button(
+            "⬇️ Download Batch Decision Records",
+            ml_policy["details"].to_csv(index=False).encode("utf-8"),
+            file_name="recoveros_batch_results.csv",
+            mime="text/csv",
+            width="stretch",
+        )
+
+
+# ============================================================
+# TAB 4 — ANALYTICS
+# ============================================================
+
+with tab4:
 
     st.header("RecoverOS Analytics")
 
@@ -655,10 +767,10 @@ with tab3:
 
 
 # ============================================================
-# TAB 4 — AUDIT LOG
+# TAB 5 — AUDIT LOG
 # ============================================================
 
-with tab4:
+with tab5:
 
     st.header("Recovery Audit Log")
 

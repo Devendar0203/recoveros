@@ -180,17 +180,6 @@ def main():
     )
 
     # -----------------------------------
-    # INTELLIGENT V1
-    # -----------------------------------
-
-    intelligent_results = run_strategy(
-        df=df,
-        strategy_name="Intelligent V1",
-        action_selector=intelligent_v1_action,
-        seed=42
-    )
-
-    # -----------------------------------
     # ML + POLICY
     # -----------------------------------
 
@@ -228,11 +217,10 @@ def main():
         seed=42
     )
 
-    results = [
-        baseline_results,
-        intelligent_results,
-        ml_policy_results
-    ]
+    # The final comparison is intentionally limited to the
+    # fixed baseline and production ML + Policy strategy.
+    # Intelligent V1 remains an exploratory, retired heuristic.
+    results = [baseline_results, ml_policy_results]
 
     print(
         "\nSTRATEGY COMPARISON\n"

@@ -84,6 +84,17 @@ If the ML model becomes unavailable, RecoverOS automatically uses a deterministi
 
 This ensures that an ML outage does not result in unsafe or undefined recovery behavior.
 
+## Live Batch Measurement
+
+The Streamlit dashboard includes a **Batch Simulation** tab. It runs the
+ML + Policy strategy and a fixed baseline across the same 100 unseen events
+and displays recovered revenue, improvement, recovery rate, policy stops,
+human escalations, per-event decisions, and a CSV export in real time.
+
+Results are **counterfactual simulation metrics**, not real payment revenue:
+the deterministic environment holds the event cohort and random seed constant
+so the action-selection strategies can be compared fairly.
+
 ## Final Benchmark
 
 Evaluation on 100 unseen events:
@@ -91,7 +102,6 @@ Evaluation on 100 unseen events:
 | Strategy | Recovered Revenue | Revenue Rate | Success Rate |
 |---|---:|---:|---:|
 | Baseline | ₹2,348,795.26 | 52.85% | 55.00% |
-| Intelligent V1 | ₹1,534,659.53 | 34.53% | 36.00% |
 | ML + Policy | ₹2,582,254.15 | 58.10% | 62.00% |
 
 ### ML + Policy Impact
@@ -100,6 +110,14 @@ Evaluation on 100 unseen events:
 - Improvement over baseline: 9.94%
 - Policy stops: 15
 - Human escalations: 6
+
+### Why the earlier heuristic is not a comparator
+
+An exploratory rules-only heuristic ("Intelligent V1") recovered less than
+the fixed baseline (34.53% vs 52.85%) on this cohort. It is retained only as
+historical learning, not presented as a production strategy or part of the
+final benchmark. The production comparison is deliberately limited to the
+fixed baseline and the ML + Policy system.
 
 ## Project Structure
 
