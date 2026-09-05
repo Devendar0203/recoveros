@@ -5,89 +5,126 @@
 [![Razorpay API](https://img.shields.io/badge/Razorpay-Test--Mode%20Verified-blue.svg)](https://razorpay.com/docs/)
 [![Track](https://img.shields.io/badge/Razorpay%20Buildathon-Track%2003%3A%20AI%20Revenue%20Recovery-orange.svg)]()
 
-> **Core Architectural Principle:** *"ML recommends; policy controls; execution records the outcome."*  
-> RecoverOS is a decision engine that diagnoses why payments, subscriptions, or invoices fail, ranks candidate recovery actions by **Net Expected Value ($EV_{net}$)**, validates decisions against deterministic compliance and stopping rules, and records an append-only audit trail—with zero unconstrained LLM hallucinations.
+RecoverOS
+AI-Powered Revenue Recovery Decision System
 
----
+Razorpay Buildathon — Track 03: AI Revenue Recovery
 
-## 📌 Problem Statement & Design Philosophy
+RecoverOS diagnoses why a payment, checkout, subscription, or invoice failed, scores every possible recovery action by expected net revenue, applies compliance guardrails before anything is executed, and logs an append-only audit trail of the entire decision — so recovery is measurable, safe, and explainable rather than a black box.
 
-Revenue loss in payment infrastructure rarely happens in a single step. It manifests through subtle degradations: issuer downtime, customer authorization drop-offs, mandate friction, and transient network errors. 
+💡 Project Architecture Summary
+The Core Stack
+Frontend: Streamlit (interactive multi-tab dashboard — recommendation, execution, analytics, audit log, batch simulation)
+Backend: Python — a modular simulator/ package (diagnosis engine, ML scorer, policy engine, idempotency guard, executor, audit logger) orchestrated by a single RecoveryWorkflow class
+Database: None yet — state is in-memory (Streamlit session state) with an append-only audit log exportable as CSV. (Noted as a scaling gap below, not hidden.)
+The AI Layer
+Model: Random Forest classifier (scikit-learn), trained to score each candidate recovery action (RETRY_NOW, RETRY_LATER, SEND_REMINDER, OFFER_INCENTIVE, ESCALATE_TO_HUMAN, SUGGEST_ALTERNATIVE_PAYMENT) by probability of success
+Decision framing: Every action is ranked by Net Expected Value = P(success) × amount − action_cost, not just raw success probability — so a cheap action with slightly lower odds can correctly beat an expensive one
+Diagnosis layer: A deterministic, rule-based root-cause taxonomy (not an LLM) maps raw gateway/failure signals to a normalized root cause with a confidence score — kept deterministic and explainable on purpose, since this is the layer the compliance logic depends on
+Safety net: A fallback policy engine takes over automatically if the ML model is unavailable or errors, guaranteeing the system never fails open into an unsafe or undefined recovery action
+No LLM, LangChain, or vector DB is used — this is a classical ML decision system by design, since the task is structured tabular scoring, not open-ended reasoning.
+The Razorpay Integration
+Test-mode Orders API creates real payment events (not simulated in the app layer)
+A webhook receiver listens for payment.failed and payment.captured events, verifies the Razorpay signature, and feeds real failed payments directly into the same RecoveryWorkflow used everywhere else in the app — no separate code path for "real" vs "demo" data
+Failures are exercised using Razorpay's documented test instruments: test cards for card declines, and the failure@razorpay / success@razorpay UPI IDs for UPI outcomes
+Key Features
+Machine-learning-based recovery action scoring (Net Expected Value)
+Deterministic, explainable root-cause diagnosis
+Policy-based safety controls (fraud escalation, retry/contact fatigue caps, high-value dispute & incentive escalation)
+ML failure fallback mechanism (safe deterministic policy takes over)
+Idempotency protection against duplicate recovery execution
+Batch simulation — run N events through the full pipeline and see aggregate revenue recovered, not just one event at a time
+Append-only audit logging with CSV export
+Real Razorpay test-mode webhook integration
+Benchmark comparison against baseline strategies
+Architecture
+Revenue Event (synthetic OR real Razorpay webhook)
+        │
+        ▼
+  Diagnosis Engine
+        │
+        ▼
+  ML Action Scorer  ──(on failure)──▶ Fallback Policy
+        │
+        ▼
+  Policy Engine
+   ├──▶ STOP
+   ├──▶ ESCALATE_TO_HUMAN
+   └──▶ Approved Recovery Action
+        │
+        ▼
+  Idempotency Guard
+        │
+        ▼
+  Recovery Executor
+        │
+        ▼
+  Audit Logger
+Batch Simulation
 
-Naive retry mechanisms introduce critical risks:
-* **Fee Burn:** Repeating retries against degraded bank switches wastes merchant capital.
-* **Customer Fatigue:** Uncoordinated messaging across channels triggers churn and disputes.
-* **Double Charges:** Concurrency collisions between automated retry workers and customer manual checkouts.
+Rather than only reporting a static benchmark number, the app now runs a configurable batch (25–200 events) through the exact same production workflow live, and reports:
 
-**RecoverOS rejects generic generative wrappers.** It relies on classical machine learning for structured tabular scoring, bounded by deterministic rule-based safety gates.
+Total revenue at risk vs. total recovered (₹ and %)
+Recovery rate broken down by root cause
+Policy stops and human escalations triggered
+Duplicate executions blocked by the idempotency guard
+A downloadable per-event CSV
+Benchmark (synthetic, 100 unseen events)
+Strategy	Recovered Revenue	Revenue Rate	Success Rate
+Baseline	₹2,348,795.26	52.85%	55.00%
+ML + Policy	₹2,582,254.15	58.10%	62.00%
 
-```text
-[ Revenue Event: Synthetic Batch OR Real Razorpay Webhook ]
-                           │
-                           ▼
-                 [ Diagnosis Engine ] 
-           (Deterministic Root-Cause Mapping)
-                           │
-                           ▼
-                 [ ML Action Scorer ] ──(Pipeline Failure)──► [ Fallback Policy ]
-              (Isotonic Random Forest)                          (Safe Recovery)
-                           │
-                           ▼
-                  [ Policy Engine ]
-           ├──▶ [ STOP ] (Fatigue / Policy Tripwires)
-           ├──▶ [ ESCALATE_TO_HUMAN ] (Fraud / High Value)
-           └──▶ [ Approved Recovery Action ]
-                           │
-                           ▼
-                 [ Idempotency Guard ]
-             (Prevents Concurrency Collisions)
-                           │
-                           ▼
-                 [ Recovery Executor ]
-            (Razorpay API Gateway Actions)
-                           │
-                           ▼
-                  [ Audit Logger ]
-          (Append-Only Ledger with CSV Export)
-📊 Benchmark Results (100 Unseen Held-Out Events)Evaluated against an independent held-out evaluation batch (100 unseen events) to verify real financial impact:  StrategyRecovered RevenueRevenue Recovery Rate (%)Success Rate (%)Architectural BehaviorBaseline (Static Rules)₹2,348,795.26  52.85%  55.00%  Immediate retries, static reminders  RecoverOS (ML + Policy)₹2,582,254.15  58.10%  62.00%  +₹233,458.89 (+9.94%) Net Revenue Lift  Deterministic Stopping Interventions: 15 actions safely blocked by policy gates.  Targeted Escalations: 6 high-value, complex cases routed directly to human support.  Transparency Note: An earlier experimental heuristic strategy ("Intelligent V1") underperformed the baseline during initial runs and was pulled from evaluation pending deeper feature re-engineering.  💡 Architecture & Component Breakdown1. The Core StackFrontend: Streamlit interactive multi-tab dashboard (Action Recommendation, Execution, Live Analytics, Audit Ledger, Batch Runner).Backend: Modular Python runtime orchestrated by a unified RecoveryWorkflow pipeline.Durability Layer: Streamlit session state accompanied by an immutable, append-only CSV audit ledger (data/audit_log.csv).  2. The Decision LayerML Action Scorer: A multi-class Random Forest model (scikit-learn) predicting probability of success across six candidate actions: RETRY_NOW, RETRY_LATER, SEND_REMINDER, OFFER_INCENTIVE[cite: 1], ESCALATE_TO_HUMAN[cite: 1], and SUGGEST_ALTERNATIVE_PAYMENT[cite: 1].  Economic Objective Function: Actions are ranked strictly by Net Expected Value ($EV_{net}$), preventing margin erosion from expensive interventions[cite: 1]:
-$$EV_{net} = (P(\text{success}) \times \text{Revenue at Risk}) - \text{Action Cost}$$Deterministic Diagnosis: A rule-based root-cause taxonomy standardizes raw failure codes (insufficient funds, 3DS timeouts, mandate dropouts) with confidence indicators[cite: 1].Circuit Breaker Fallback: If ML scoring throws an exception or experiences service degradation, FallbackPolicy automatically assumes control, selecting safe, bounded fallback actions (fallback_used = True)[cite: 1].3. The Razorpay IntegrationOrders API: Generates native test-mode payment transactions.HMAC Signature Verification: Verifies inbound payment.failed and payment.captured webhooks using RAZORPAY_WEBHOOK_SECRET.Zero Disconnect: Live webhook events flow directly into the exact same RecoveryWorkflow engine powering simulated batches.Test Instrument Validation: Thoroughly tested using documented test instruments (failure@razorpay, success@razorpay, and declining test card profiles).🛡️ Policy Controls & Safety GuardrailsRetry Fatigue Cap: Hard stopping rule enforcing a maximum attempt ceiling per transaction.Customer Contact Safeguard: Rate-limits communication frequency to eliminate user spam.Fraud Isolation: Suspicious or fraud-flagged events are strictly excluded from automated retries and routed to compliance review.Dispute & Incentive Ceilings: Discounts and high-value invoices exceed autonomous thresholds and mandate human authorization.Idempotency Guard: Protects against race conditions between automated retries and manual customer payments.📂 Project StructurePlaintextrecoveros/
-├── app.py                             # Interactive Streamlit dashboard[cite: 1]
-├── requirements.txt                   # Environment dependencies
+Note: an earlier "Intelligent V1" heuristic strategy underperformed the naive baseline in initial testing and has been pulled from this table pending root-cause analysis — including a broken result honestly would raise more questions than it answers. Re-benchmark before citing any V1 numbers publicly.
+
+Safety Controls
+Maximum retry protection (hard stop after N attempts)
+Maximum customer-contact protection (no repeated nudges past a cap)
+Fraud escalation (never auto-retried — always routed to a human)
+Customer cancellation handling (no automated recovery triggered)
+High-value invoice dispute escalation
+High-value incentive escalation (requires human approval above a threshold)
+Project Structure
+recoveros/
+├── app.py
+├── requirements.txt
 ├── data/
-│   ├── revenue_events.csv             # Simulated event baseline[cite: 1]
-│   ├── evaluation_events.csv          # Held-out benchmark dataset[cite: 1]
-│   └── audit_log.csv                  # Immutable decision ledger[cite: 1]
 ├── models/
-│   └── recovery_action_model.joblib   # Persisted ML scoring pipeline[cite: 1]
+│   └── recovery_action_model.joblib
 ├── simulator/
-│   ├── diagnosis_engine.py            # Deterministic root-cause mapping
-│   ├── ml_action_scorer.py            # Expected Net Value ranker[cite: 1]
-│   ├── policy_engine.py               # Compliance rules & stopping tripwires
-│   ├── fallback_policy.py             # Circuit breaker failure handlers[cite: 1]
-│   ├── idempotency_guard.py           # Duplicate execution prevention
-│   ├── recovery_executor.py           # Action execution module[cite: 1]
-│   ├── recovery_workflow.py           # Unified pipeline orchestrator
-│   ├── batch_simulator.py             # Configurable batch runner
-│   └── audit_logger.py                # Append-only audit logger[cite: 1]
+│   ├── diagnosis_engine.py
+│   ├── ml_action_scorer.py
+│   ├── policy_engine.py
+│   ├── fallback_policy.py
+│   ├── idempotency_guard.py
+│   ├── recovery_environment.py
+│   ├── recovery_executor.py
+│   ├── recovery_workflow.py
+│   ├── batch_simulator.py
+│   └── audit_logger.py
 ├── integrations/
-│   ├── razorpay_connector.py          # Native API client
-│   └── webhook_server.py              # HMAC-verified webhook listener
+│   ├── razorpay_connector.py
+│   └── webhook_server.py
 └── tests/
-    ├── test_diagnosis_engine.py       # Taxonomy mapping unit tests
-    ├── test_environment.py            # Execution simulation tests
-    ├── test_ml_scorer.py              # EV_net calculation tests[cite: 1]
-    ├── test_ml_fallback.py            # Failure circuit-breaker tests[cite: 1]
-    └── test_recovery_workflow.py      # End-to-end integration tests
-🚀 Quickstart & Local Setup1. Installation & EnvironmentBashgit clone [https://github.com/your-username/recoveros.git](https://github.com/your-username/recoveros.git)
-cd recoveros
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+    ├── test_diagnosis_engine.py
+    ├── test_environment.py
+    ├── test_ml_scorer.py
+    ├── test_ml_fallback.py
+    └── test_recovery_workflow.py
+Running Locally
+bash
 pip install -r requirements.txt
-2. Run the Verification SuiteBashpython -m unittest discover tests
-3. Launch the DashboardBashstreamlit run app.py
-4. Running the Razorpay Webhook ReceiverBashexport RAZORPAY_KEY_ID="rzp_test_..."
-export RAZORPAY_KEY_SECRET="..."
-export RAZORPAY_WEBHOOK_SECRET="..."
+streamlit run app.py
 
+For the real Razorpay demo flow:
+
+bash
+export RAZORPAY_KEY_ID=<your test-mode key id>
+export RAZORPAY_KEY_SECRET=<your test-mode key secret>
+export RAZORPAY_WEBHOOK_SECRET=<from Dashboard > Webhooks>
 python integrations/webhook_server.py
-Expose port 5000 using ngrok http 5000, register the URL in the Razorpay Dashboard under Webhooks (payment.failed, payment.captured), and trigger failures via test instruments.🔍 Upfront Engineering DisclosuresState Persistence: Audit state currently writes to session memory and append-only CSV files[cite: 1]. Production deployment requires migrating this interface to an external transactional database (e.g., PostgreSQL with row-level locks).Model Regularization: Model ROC-AUC is currently ~0.66[cite: 1]. Further expansion of training feature sets and hyperparameter optimization will follow
+# expose with ngrok, point the Razorpay webhook at it, then fail a
+# test payment using failure@razorpay (UPI) or a decline test card
+Known Limitations (stated up front, not discovered by the panel)
+No persistent database yet — audit history resets when the app restarts; CSV export is the current durability mechanism
+Model quality is a work in progress (ROC-AUC ~0.65) — feature engineering and more training data are the next priority
+The V1 heuristic benchmark needs re-validation before being cited again
